@@ -1,0 +1,8 @@
+# SPDX-FileCopyrightText: 2003 Argonne National Laboratory
+#
+# SPDX-License-Identifier: EPICS
+
+driver(xxxDriver)
+
+include "xxxRecord.dbd"
+device(xxx,CONSTANT,devXxxSoft,"Soft Channel")
