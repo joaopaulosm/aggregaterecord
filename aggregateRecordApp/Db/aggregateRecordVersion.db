@@ -2,8 +2,8 @@
 #
 # SPDX-License-Identifier: EPICS
 
-record(lsi, "$(user):aggregateRec:version") {
-    field(DTYP, "aggregateRec version")
+record(lsi, "$(user):aggregateRecord:version") {
+    field(DTYP, "aggregateRecord version")
     field(DESC, "Version string")
     field(SIZV, "$(SIZV=200)")
     field(PINI, "YES")

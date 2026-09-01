@@ -18,56 +18,56 @@ DBDINC += xxxRecord
 DBD += xxxSupport.dbd
 
 # Build an IOC support library
-LIBRARY_IOC += aggregateRecSupport
+LIBRARY_IOC += aggregateRecordSupport
 
 # Compile and add code to the support library
-aggregateRecSupport_SRCS += xxxRecord.c
-aggregateRecSupport_SRCS += devXxxSoft.c
+aggregateRecordSupport_SRCS += xxxRecord.c
+aggregateRecordSupport_SRCS += devXxxSoft.c
 
 # Link locally-provided code into the support library,
 # rather than directly into the IOC application, that
 # causes problems on Windows DLL builds
-aggregateRecSupport_SRCS += devaggregateRecVersion.c
+aggregateRecordSupport_SRCS += devaggregateRecordVersion.c
 
-aggregateRecSupport_LIBS += $(EPICS_BASE_IOC_LIBS)
+aggregateRecordSupport_LIBS += $(EPICS_BASE_IOC_LIBS)
 
 # Auto-generate a header file containing a version string.
 # Version comes from the VCS if available, else date+time.
-GENVERSION = aggregateRecVersion.h
+GENVERSION = aggregateRecordVersion.h
 # Macro name
-GENVERSIONMACRO = aggregateRecVERSION
+GENVERSIONMACRO = aggregateRecordVERSION
 
 # Build the IOC application
-PROD_IOC = aggregateRec
+PROD_IOC = aggregateRecord
 
-# aggregateRec.dbd will be created and installed
-DBD += aggregateRec.dbd
+# aggregateRecord.dbd will be created and installed
+DBD += aggregateRecord.dbd
 
-# aggregateRec.dbd will include these files:
-aggregateRec_DBD += base.dbd
-aggregateRec_DBD += xxxSupport.dbd
-aggregateRec_DBD += devaggregateRecVersion.dbd
+# aggregateRecord.dbd will include these files:
+aggregateRecord_DBD += base.dbd
+aggregateRecord_DBD += xxxSupport.dbd
+aggregateRecord_DBD += devaggregateRecordVersion.dbd
 
-# aggregateRec_registerRecordDeviceDriver.cpp derives from aggregateRec.dbd
-aggregateRec_SRCS += aggregateRec_registerRecordDeviceDriver.cpp
+# aggregateRecord_registerRecordDeviceDriver.cpp derives from aggregateRecord.dbd
+aggregateRecord_SRCS += aggregateRecord_registerRecordDeviceDriver.cpp
 
 # Build the main IOC entry point where needed
-aggregateRec_SRCS_DEFAULT += aggregateRecMain.cpp
-aggregateRec_SRCS_vxWorks += -nil-
+aggregateRecord_SRCS_DEFAULT += aggregateRecordMain.cpp
+aggregateRecord_SRCS_vxWorks += -nil-
 
 # Link in the code from our support library
-aggregateRec_LIBS += aggregateRecSupport
+aggregateRecord_LIBS += aggregateRecordSupport
 
 # Link QSRV2
-aggregateRec_DBD += pvxsIoc.dbd
-aggregateRec_LIBS += pvxsIoc pvxs
+aggregateRecord_DBD += pvxsIoc.dbd
+aggregateRecord_LIBS += pvxsIoc pvxs
 
 # Finally link IOC to the EPICS Base libraries
-aggregateRec_LIBS += $(EPICS_BASE_IOC_LIBS)
+aggregateRecord_LIBS += $(EPICS_BASE_IOC_LIBS)
 
 include $(TOP)/configure/RULES
 #----------------------------------------
 #  ADD EXTRA GNUMAKE RULES BELOW HERE
 
 # Explicit dependency needed for generated header file
-devaggregateRecVersion$(DEP): $(COMMON_DIR)/$(GENVERSION)
+devaggregateRecordVersion$(DEP): $(COMMON_DIR)/$(GENVERSION)

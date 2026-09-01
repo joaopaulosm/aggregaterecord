@@ -2,4 +2,4 @@
 #
 # SPDX-License-Identifier: EPICS
 
-device(lsi,INST_IO,devaggregateRecVersion,"aggregateRec version")
+device(lsi,INST_IO,devaggregateRecordVersion,"aggregateRecord version")

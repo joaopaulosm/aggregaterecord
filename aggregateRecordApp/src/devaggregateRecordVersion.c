@@ -2,7 +2,7 @@
 
 /* SPDX-License-Identifier: EPICS */
 
-/* devaggregateRecVersion.c */
+/* devaggregateRecordVersion.c */
 /* Example device support for the lsi (long string input) record
  * providing the module version string as the value
  */
@@ -14,12 +14,12 @@
 #include "devSup.h"
 #include "lsiRecord.h"
 
-#include "aggregateRecVersion.h"
+#include "aggregateRecordVersion.h"
 
 /* must be last include */
 #include "epicsExport.h"
 
-const char version[] = aggregateRecVERSION;
+const char version[] = aggregateRecordVERSION;
 
 static long read_string(lsiRecord *prec)
 {
@@ -36,7 +36,7 @@ static long read_string(lsiRecord *prec)
     return 0;
 }
 
-static lsidset devaggregateRecVersion = {
+static lsidset devaggregateRecordVersion = {
     {5, NULL, NULL, NULL, NULL}, read_string
 };
-epicsExportAddress(dset,devaggregateRecVersion);
+epicsExportAddress(dset,devaggregateRecordVersion);
