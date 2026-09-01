@@ -4,10 +4,7 @@
 #include <pvxs/nt.h>
 
 struct NTAggregate {
-    //! A TypeDef which can be appended
-    PVXS_API
-    pvxs::TypeDef build() const;
-    //! Instantiate
+    PVXS_API pvxs::TypeDef build() const;
     inline pvxs::Value create() const {
         return build().create();
     }

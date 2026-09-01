@@ -20,9 +20,9 @@
 
 #include <pvxs/log.h>
 #include <pvxs/nt.h>
+#include <aggregate/ntaggregate.h>
 
 #include "aggregateSource.h"
-//#include "aggregateRecord.h"
 
 DEFINE_LOGGER(aglog, "pvxs.aggregate.source");
 
@@ -57,7 +57,7 @@ static pvxs::TypeCode ftype_to_typecode(epicsEnum16 type)
 /* Build NTTable prototype from record metadata (must be called under lock) */
 pvxs::Value AggregateSource::makeProto() const
 {
-    return pvxs::nt::NTScalar::build()
+    return NTAggregate().build().create();
 }
 
 /* ------------------------------------------------------------------ */
@@ -73,7 +73,7 @@ AggregateSource::AggregateSource()
             const char *rname = dbGetRecordName(&dbe);
             dbCommon *prec = (dbCommon *)dbe.precnode->precord;
 
-            std::unique_ptr<TableRecCtx> ctx(new TableRecCtx());
+            std::unique_ptr<AggregateRecCtx> ctx(new AggregateRecCtx());
             ctx->prec       = prec;
             ctx->src        = this;
             ctx->hdr.notify = &AggregateSource::onProcess;
@@ -85,13 +85,10 @@ AggregateSource::AggregateSource()
                lock makes it safe against a concurrent process(). */
             try {
                 RecLock lk(prec);
-                TableRecordWrapper w(prec);
-                w.data_cols(ctx->dcols);
-                w.opt_cols(ctx->ocols);
-                ctx->proto = makeProto(ctx->dcols, ctx->ocols);
-                ((tableRecord *)prec)->rpvt = &ctx->hdr;
+                ctx->proto = makeProto();
+                ((aggregateRecord *)prec)->rpvt = &ctx->hdr;
             } catch (std::exception &e) {
-                log_err_printf(tlog, "makeProto failed for '%s': %s\n",
+                log_err_printf(aglog, "makeProto failed for '%s': %s\n",
                                rname, e.what());
                 continue;
             }
@@ -110,7 +107,7 @@ AggregateSource::~AggregateSource()
     /* Stop process() from calling into us before our state is destroyed. */
     for (auto &ctx : ctxs_) {
         RecLock lk(ctx->prec);
-        ((tableRecord *)ctx->prec)->rpvt = nullptr;
+        ((aggregateRecord *)ctx->prec)->rpvt = nullptr;
     }
 }
 
@@ -204,28 +201,19 @@ void AggregateSource::onCreate(std::unique_ptr<pvxs::server::ChannelControl> &&c
 }
 
 /* Synchronous update hook — installed in each record's rpvt->notify and called
-   from tableRecord's process() with the record lock held and this cycle's CHGD
+   from aggregateRecord's process() with the record lock held and this cycle's CHGD
    flags valid. Builds one partial snapshot and posts it to every subscriber. */
-void AggregateSource::onProcess(struct tableRecord *prect)
+void AggregateSource::onProcess(struct aggregateRecord *prect)
 {
     if (!prect->rpvt)
         return;
-    tableRecordPvt *hdr = static_cast<tableRecordPvt *>(prect->rpvt);
-    TableRecCtx    *ctx = static_cast<TableRecCtx *>(hdr->self);
+    aggregateRecordPvt *hdr = static_cast<aggregateRecordPvt *>(prect->rpvt);
+    AggregateRecCtx    *ctx = static_cast<AggregateRecCtx *>(hdr->self);
     if (!ctx)
         return;
 
     std::lock_guard<std::mutex> g(ctx->mu);
-    if (ctx->subs.empty())
-        return;
-    try {
-        pvxs::Value v = snapshot(*ctx, /*withMeta=*/false);
-        for (auto &sc : ctx->subs)
-            if (sc->ctrl)
-                sc->ctrl->post(v);
-    } catch (std::exception &e) {
-        log_exc_printf(tlog, "onProcess: %s\n", e.what());
-    }
+    log_info_printf(aglog, "onProcess: %s\n", prect->name);
 }
 
 AggregateSource::List AggregateSource::onList()

@@ -10,6 +10,7 @@ include $(TOP)/configure/CONFIG
 
 # Use typed rset structure (see 3.16.1 release notes)
 USR_CPPFLAGS += -DUSE_TYPED_RSET -DUSE_TYPED_DSET -DUSE_TYPED_DRVET
+USR_CPPFLAGS += -std=c++17
 
 # xxxRecord.h will be created from xxxRecord.dbd
 DBDINC += xxxRecord
