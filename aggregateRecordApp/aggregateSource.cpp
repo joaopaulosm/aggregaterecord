@@ -61,25 +61,38 @@ static pvxs::TypeCode ftype_to_typecode(epicsEnum16 type)
 //     return NTAggregate().build().create();
 // }
 
-/* Rebuild ctx.current from the record's current field values.  Assigning a
-   field also marks it, so the posted delta carries exactly what we set here.
-   Caller must hold the record lock. */
+/* Fill a time_t sub-structure from an EPICS timestamp. */
+static void fillTime(pvxs::Value v, const epicsTimeStamp &ts, epicsUInt64 utag = 0)
+{
+    v["secondsPastEpoch"] = int64_t(ts.secPastEpoch) + POSIX_TIME_AT_EPICS_EPOCH;
+    v["nanoseconds"]      = int32_t(ts.nsec);
+    v["userTag"]          = int32_t(utag);
+}
+
+/* Rebuild ctx.current from the record's current field values -- record fields
+   only, never dpvt, since this also runs at construction before any process().
+   Assigning a field also marks it, so the posted delta carries exactly what we
+   set here.  Caller must hold the record lock. */
 static void updateSnapshot(AggregateRecCtx &ctx, const aggregateRecord *prec)
 {
     pvxs::Value v = ctx.proto.cloneEmpty();
 
-    v["value"] = prec->val;
-    /* Only a single observation is synthesised per process() for now. */
-    v["N"]     = int64_t(1);
+    v["value"]      = prec->val;
+    v["N"]          = int64_t(prec->idxn);
+    v["dispersion"] = prec->dpsr;
+    v["first"]      = prec->fval;
+    v["last"]       = prec->lval;
+    v["max"]        = prec->maxv;
+    v["min"]        = prec->minv;
+    v["descriptor"] = prec->desc;
+
+    fillTime(v["firstTimeStamp"], prec->ftime);
+    fillTime(v["lastTimeStamp"],  prec->ltime);
+    fillTime(v["timeStamp"],      prec->time, prec->utag);
 
     v["alarm.severity"] = int32_t(prec->sevr);
     v["alarm.status"]   = int32_t(prec->stat);
     v["alarm.message"]  = prec->amsg;
-
-    v["timeStamp.secondsPastEpoch"] =
-        int64_t(prec->time.secPastEpoch) + POSIX_TIME_AT_EPICS_EPOCH;
-    v["timeStamp.nanoseconds"] = int32_t(prec->time.nsec);
-    v["timeStamp.userTag"]     = int32_t(prec->utag);
 
     ctx.current = std::move(v);
 }
@@ -117,7 +130,13 @@ AggregateSource::AggregateSource()
                 continue;
             }
 
+            /* Claim both "REC" and "REC.VAL": over PVA the record *is* the
+               NTAggregate, so its value field must not fall through to
+               qsrvSingle as an NTScalar.  Other fields (REC.MINV, ...) do fall
+               through and are served as ordinary NTScalars.  Only the bare
+               name is advertised by onList(). */
             records_[rname] = ctx.get();
+            records_[std::string(rname) + ".VAL"] = ctx.get();
             names->insert(rname);
             ctxs_.push_back(std::move(ctx));
         }
@@ -224,9 +243,10 @@ void AggregateSource::onCreate(std::unique_ptr<pvxs::server::ChannelControl> &&c
     });
 }
 
-/* Synchronous update hook — installed in each record's rpvt->notify and called
-   from aggregateRecord's process() with the record lock held and this cycle's CHGD
-   flags valid. Builds one partial snapshot and posts it to every subscriber. */
+/* Synchronous update hook -- installed in each record's rpvt->notify and called
+   from aggregateRecord's process() with the record lock held, so the fields it
+   reads are exactly those the cycle just produced.  Rebuilds the snapshot and
+   posts it to every subscriber. */
 void AggregateSource::onProcess(struct aggregateRecord *prect)
 {
     if (!prect->rpvt)

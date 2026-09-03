@@ -32,9 +32,9 @@ struct SubCtx {
 };
 
 /* Per-record context, owned by AggregateSource and pointed to by prec->rpvt.
-   aggregateRecordPvt MUST be the first member so the record can recover the full
-   context from prec->rpvt. The NTTable prototype is built once and cloned for
-   every update and GET. */
+   aggregateRecordPvt is kept as the first member so &ctx == &ctx->hdr; the
+   code recovers ctx through hdr.self, but keep the layout invariant anyway.
+   The NTAggregate prototype is built once; `current` is the latest snapshot. */
 struct AggregateRecCtx {
     aggregateRecordPvt                 hdr;    /* offset 0: notify() */
     dbCommon                           *prec;
@@ -50,14 +50,14 @@ struct AggregateRecCtx {
 };
 
 /**
- * Custom pvxs Source that publishes table records as NTTable PVs.
+ * Custom pvxs Source that publishes aggregate records as NTAggregate PVs.
  *
- * Registered at priority -1, it intercepts channels for table records before
- * the default qsrvSingle source (priority 0).
+ * Registered at priority -1, it intercepts channels for aggregate records
+ * before the default qsrvSingle source (priority 0).
  *
- * Updates are driven synchronously from aggregateRecord's process() via the RPVT
- * hook (see onProcess), so the per-column CHGD flags are read in the same locked
- * cycle that set them — no asynchronous dbEvent, no race.
+ * Updates are driven synchronously from aggregateRecord's process() via the
+ * RPVT hook (see onProcess), so the statistics fields are read in the same
+ * locked cycle that wrote them -- no asynchronous dbEvent, no race.
  */
 class AggregateSource final : public pvxs::server::Source {
 public:

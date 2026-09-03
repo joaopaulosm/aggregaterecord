@@ -4,10 +4,15 @@
  *
  * Record support for the "aggregate" record type.
  *
- * On every process() the record reads a new VAL through device support and then
- * invokes the RPVT notify hook, which is what drives the NTAggregate PV update
- * in AggregateSource.  Device support is mandatory; devAggregateSoft provides
- * the default "Soft Channel" that reads VAL from INP.
+ * The record is a generic carrier for NTAggregate: every process() asks device
+ * support for a new observation via read_newvalue(), posts whichever statistics
+ * fields it maintains, and then invokes the RPVT notify hook that drives the
+ * PV Access update in AggregateSource.  Which statistics are computed, and over
+ * how many samples, is entirely the device support's business (see
+ * devAggregateSoft for the default).  Device support is mandatory.
+ *
+ * Writing N (special SPC_MOD) sets FLSH, which asks device support to finish
+ * the current window on the next process() instead of taking a sample.
  */
 #include <alarm.h>
 #include <dbAccess.h>
@@ -33,7 +38,7 @@
 #define initialize NULL
 static long init_record(struct dbCommon *, int);
 static long process(struct dbCommon *);
-#define special NULL
+static long special(DBADDR *, int);
 #define get_value NULL
 #define cvt_dbaddr NULL
 #define get_array_info NULL
@@ -69,13 +74,28 @@ rset aggregateRSET = {
 };
 epicsExportAddress(rset, aggregateRSET);
 
+static void checkAlarms(aggregateRecord *prec)
+{
+    /* VAL is undefined until device support finishes its first window. */
+    if (prec->udf)
+        recGblSetSevr(prec, UDF_ALARM, prec->udfs);
+}
+
 static void monitor(aggregateRecord *prec)
 {
     unsigned short monitor_mask = recGblResetAlarms(prec);
 
-    /* VAL is regenerated every cycle, so always post it. */
+    /* Device support may have touched any of these; post them all rather than
+       track per-field changes.  FTIME/LTIME are DBF_NOACCESS: nothing can
+       subscribe to them, so they are not posted. */
     monitor_mask |= DBE_VALUE | DBE_LOG;
-    db_post_events(prec, &prec->val, monitor_mask);
+    db_post_events(prec, &prec->val,  monitor_mask);
+    db_post_events(prec, &prec->dpsr, monitor_mask);
+    db_post_events(prec, &prec->idxn, monitor_mask);
+    db_post_events(prec, &prec->fval, monitor_mask);
+    db_post_events(prec, &prec->lval, monitor_mask);
+    db_post_events(prec, &prec->maxv, monitor_mask);
+    db_post_events(prec, &prec->minv, monitor_mask);
 }
 
 /* Hand the record to whoever installed itself in RPVT (AggregateSource).  Called
@@ -96,6 +116,16 @@ static long init_record(struct dbCommon *pcommon, int pass)
     if (pass == 0) {
         /* AggregateSource fills this in at initHookAfterIocBuilt. */
         prec->rpvt = NULL;
+
+        /* MAXN sizes the device support's sample buffer and cannot change
+           after init.  iocInit ignores our return value, so pact is what
+           actually keeps a misconfigured record from ever processing. */
+        if (prec->maxn < 1) {
+            recGblRecordError(S_db_badField, prec,
+                              "aggregate: init_record (MAXN must be >= 1)");
+            prec->pact = TRUE;
+            return S_db_badField;
+        }
         return 0;
     }
 
@@ -122,6 +152,21 @@ static long init_record(struct dbCommon *pcommon, int pass)
     return 0;
 }
 
+static long special(DBADDR *paddr, int after)
+{
+    aggregateRecord *prec = (aggregateRecord *)paddr->precord;
+
+    if (!after)
+        return 0;
+
+    /* N is pp(TRUE): after this returns, dbPutField processes a Passive record
+       and device support finishes the window instead of sampling. */
+    if (dbGetFieldIndex(paddr) == aggregateRecordN)
+        prec->flsh = 1;
+
+    return 0;
+}
+
 static long process(struct dbCommon *pcommon)
 {
     aggregateRecord *prec = (aggregateRecord *)pcommon;
@@ -144,9 +189,10 @@ static long process(struct dbCommon *pcommon)
     prec->pact = TRUE;
 
     recGblGetTimeStamp(prec);
-    if (status == 0)
-        prec->udf = FALSE;
 
+    /* udf is cleared by device support when it finishes a window, not here:
+       a partial sample does not make VAL defined. */
+    checkAlarms(prec);
     monitor(prec);
     notifyPublisher(prec);
 

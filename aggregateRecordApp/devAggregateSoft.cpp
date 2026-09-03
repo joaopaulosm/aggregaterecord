@@ -4,21 +4,45 @@
  *
  * "Soft Channel" device support for the aggregate record.
  *
- * Fetches a scalar from INP and places it in VAL, which record support then
- * publishes as the "value" field of the NTAggregate PV.  Modelled on Base's
- * devLiSoft/devAiSoft: a CONSTANT INP is read once at init, anything else is
- * read on every process().
+ * Accumulates successive samples from INP into a MAXN-sized buffer.  Every
+ * sample updates the running extremes (FVAL/FTIME, MINV, MAXV) and IDXN so
+ * partial results are published on each process(); when IDXN reaches N (or
+ * FLSH is set) the window is finished: mean -> VAL, population standard
+ * deviation -> DPSR, last sample -> LVAL/LTIME.  The next sample then starts a
+ * new window.
+ *
+ * Link handling follows Base's devLiSoft: DB/CA links are read under
+ * dbLinkDoLocked() so value and timestamp come from the same instant; a
+ * CONSTANT INP is re-parsed on every process (dbGetLink() on a CONSTANT link
+ * succeeds but writes nothing).
  */
+#include <math.h>
+#include <stdlib.h>
+
 #include <alarm.h>
 #include <dbAccess.h>
 #include <dbDefs.h>
 #include <devSup.h>
 #include <epicsTime.h>
+#include <errlog.h>
 #include <recGbl.h>
 
 #include "aggregateRecord.h"
+#include "aggregateRecordUtil.h"
 
 #include <epicsExport.h>   /* defines epicsExportSharedSymbols, keep last */
+
+struct SoftPvt {
+    double        *buf;     /* MAXN samples; allocated once, never freed */
+    epicsUInt32    cap;     /* == MAXN */
+    epicsTimeStamp lastTs;  /* stamp of the most recent sample */
+    bool           done;    /* window finished: next sample starts a new one */
+};
+
+struct Sample {
+    double         x;
+    epicsTimeStamp ts;
+};
 
 static long init_record(dbCommon *pcommon);
 static long read_newvalue(aggregateRecord *prec);
@@ -29,46 +53,183 @@ aggregatedset devAggregateSoft = {
 };
 epicsExportAddress(dset, devAggregateSoft);
 
-static long init_record(dbCommon *pcommon)
+/* dpvt is allocated lazily rather than only in init_record because a runtime
+   put to INP or DTYP resets it to NULL (dbAccess.c, dbPutFieldLink). */
+static SoftPvt *ensurePvt(aggregateRecord *prec)
 {
-    aggregateRecord *prec = (aggregateRecord *)pcommon;
+    AggregateRecordWrapper rec(*prec);
+    SoftPvt *pvt = rec.get_private<SoftPvt>();
 
-    /* A CONSTANT link supplies VAL once, here; read_newvalue() then has
-       nothing to do on each process(). */
-    if (recGblInitConstantLink(&prec->inp, DBF_DOUBLE, &prec->val))
-        prec->udf = FALSE;
+    if (pvt)
+        return pvt;
 
-    return 0;
+    if (prec->maxn < 1)
+        return NULL;
+
+    pvt = (SoftPvt *)calloc(1, sizeof(*pvt));
+    if (!pvt)
+        return NULL;
+
+    pvt->buf = (double *)calloc(prec->maxn, sizeof(double));
+    if (!pvt->buf) {
+        free(pvt);
+        return NULL;
+    }
+    pvt->cap = prec->maxn;
+    /* Whatever IDXN says, a fresh buffer holds no samples: start over. */
+    pvt->done = true;
+
+    rec.set_private(pvt);
+    return pvt;
 }
 
-/* Runs with the source record's lock held, so VAL and TIME come from the same
-   instant.  dbGetLink() raises LINK_ALARM itself on failure. */
-static long readLocked(struct link *pinp, void *)
+/* Runs with the source record's lock held.  dbGetLink() raises LINK_ALARM
+   itself on failure. */
+static long readLocked(struct link *pinp, void *priv)
 {
-    aggregateRecord *prec = (aggregateRecord *)pinp->precord;
-    long status = dbGetLink(pinp, DBR_DOUBLE, &prec->val, 0, 0);
+    Sample *s = (Sample *)priv;
+    long status = dbGetLink(pinp, DBR_DOUBLE, &s->x, 0, 0);
 
     if (status)
         return status;
 
+    if (dbGetTimeStamp(pinp, &s->ts))
+        epicsTimeGetCurrent(&s->ts);
+
+    return 0;
+}
+
+/* *have is false when the link is a CONSTANT that holds nothing (INP unset):
+   not an error, just no observation. */
+static long fetchSample(aggregateRecord *prec, Sample *s, bool *have)
+{
+    long status;
+
+    *have = false;
+
+    if (dbLinkIsConstant(&prec->inp)) {
+        if (dbLoadLink(&prec->inp, DBF_DOUBLE, &s->x))
+            return 0;
+        epicsTimeGetCurrent(&s->ts);
+        *have = true;
+        return 0;
+    }
+
+    status = dbLinkDoLocked(&prec->inp, readLocked, s);
+    if (status == S_db_noLSET)
+        status = readLocked(&prec->inp, s);
+
+    *have = (status == 0);
+    return status;
+}
+
+static void finishWindow(aggregateRecord *prec, SoftPvt *pvt)
+{
+    epicsUInt32 n = prec->idxn;
+
+    if (n > pvt->cap)
+        n = pvt->cap;
+
+    if (n > 0) {
+        double sum = 0.0, m2 = 0.0, mean;
+        epicsUInt32 i;
+
+        for (i = 0; i < n; i++)
+            sum += pvt->buf[i];
+        mean = sum / n;
+
+        for (i = 0; i < n; i++) {
+            double d = pvt->buf[i] - mean;
+            m2 += d * d;
+        }
+
+        prec->val   = mean;
+        prec->dpsr  = sqrt(m2 / n);
+        prec->lval  = pvt->buf[n - 1];
+        prec->ltime = pvt->lastTs;
+        prec->udf   = FALSE;
+    }
+
+    pvt->done = true;
+}
+
+static void accumulate(aggregateRecord *prec, SoftPvt *pvt, const Sample *s)
+{
+    epicsUInt32 target = prec->n;
+
+    if (target < 1)
+        target = 1;
+    if (target > pvt->cap)
+        target = pvt->cap;
+
+    if (pvt->done || prec->idxn >= target) {
+        prec->idxn = 0;
+        pvt->done  = false;
+    }
+
+    pvt->buf[prec->idxn++] = s->x;
+    pvt->lastTs = s->ts;
+
+    if (prec->idxn == 1) {
+        prec->fval  = s->x;
+        prec->minv  = s->x;
+        prec->maxv  = s->x;
+        prec->ftime = s->ts;
+    } else {
+        if (s->x < prec->minv)
+            prec->minv = s->x;
+        if (s->x > prec->maxv)
+            prec->maxv = s->x;
+    }
+
+    /* With TSE=-2 the record's stamp is ours to set; use the observation's so
+       partial updates are stamped by the sample that produced them. */
     if (dbLinkIsConstant(&prec->tsel) &&
         prec->tse == epicsTimeEventDeviceTime)
-        dbGetTimeStamp(pinp, &prec->time);
+        prec->time = s->ts;
 
-    return status;
+    if (prec->idxn >= target)
+        finishWindow(prec, pvt);
+}
+
+static long init_record(dbCommon *pcommon)
+{
+    aggregateRecord *prec = (aggregateRecord *)pcommon;
+
+    if (!ensurePvt(prec)) {
+        recGblRecordError(S_db_badField, prec,
+                          "devAggregateSoft: init_record (MAXN < 1 or out of memory)");
+        return S_db_badField;
+    }
+    return 0;
 }
 
 static long read_newvalue(aggregateRecord *prec)
 {
-    long status;
+    SoftPvt *pvt = ensurePvt(prec);
+    Sample   s;
+    bool     have;
+    long     status;
 
-    /* VAL was already loaded by init_record(); nothing to re-read. */
-    if (dbLinkIsConstant(&prec->inp))
+    if (!pvt) {
+        recGblSetSevr(prec, SOFT_ALARM, INVALID_ALARM);
+        return S_db_badField;
+    }
+
+    /* A write to N (via special) or to FLSH: finish what we have, take no
+       sample.  The next sample opens a new window. */
+    if (prec->flsh) {
+        prec->flsh = 0;
+        finishWindow(prec, pvt);
         return 0;
+    }
 
-    status = dbLinkDoLocked(&prec->inp, readLocked, NULL);
-    if (status == S_db_noLSET)
-        status = readLocked(&prec->inp, NULL);
+    status = fetchSample(prec, &s, &have);
+    if (status)
+        return status;
 
-    return status;
+    if (have)
+        accumulate(prec, pvt, &s);
+
+    return 0;
 }

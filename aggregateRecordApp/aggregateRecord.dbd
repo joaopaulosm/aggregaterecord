@@ -51,8 +51,18 @@ recordtype(aggregate) {
     field(N,DBF_ULONG) {
         prompt("NUM OBS")
         promptgroup("40 - Input")
+        # A write finishes the current window (special sets FLSH) and, being
+        # pp(TRUE), processes a Passive record so the result publishes at once.
+        special(SPC_MOD)
         pp(TRUE)
 		initial("1")
+    }
+    field(FLSH,DBF_UCHAR) {
+        prompt("Finish Window")
+        interest(2)
+        # Set by special() on a write to N, or directly by a user: the next
+        # process() finishes the current window instead of taking a sample.
+        pp(TRUE)
     }
 	field(IDXN,DBF_ULONG) {
 		prompt("Obs index")
@@ -97,13 +107,13 @@ recordtype(aggregate) {
         special(SPC_NOMOD)
     }
     field(FTIME,DBF_NOACCESS) {
-		prompt("Time")
+		prompt("First Obs Time")
 		special(SPC_NOMOD)
 		interest(2)
 		extra("epicsTimeStamp      ftime")
 	}
     field(LTIME,DBF_NOACCESS) {
-		prompt("Time")
+		prompt("Last Obs Time")
 		special(SPC_NOMOD)
 		interest(2)
 		extra("epicsTimeStamp      ltime")

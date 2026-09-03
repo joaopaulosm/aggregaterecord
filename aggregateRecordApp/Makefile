@@ -11,6 +11,7 @@ LIBRARY_IOC += aggregateRecord
 
 aggregateRecord_SRCS += aggregateRecord.cpp
 aggregateRecord_SRCS += devAggregateSoft.cpp
+aggregateRecord_SRCS += aggregateRecordUtil.cpp
 aggregateRecord_SRCS += ntaggregate.cpp
 
 aggregateRecord_SRCS += aggregateSource.cpp

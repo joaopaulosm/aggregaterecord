@@ -3,8 +3,11 @@
 # Author: Bruno Martins
 #
 # Example aggregate records.  Each uses the default "Soft Channel" device
-# support, which copies INP into VAL; record support then publishes VAL as the
-# "value" field of an epics:nt/NTAggregate:1.0 PV of the same name.
+# support, which accumulates N samples from INP (up to MAXN) and publishes the
+# mean (VAL), population std dev (DPSR), first/last/min/max and IDXN as an
+# epics:nt/NTAggregate:1.0 PV of the same name.  Partial results (first, min,
+# max, IDXN) are published on every sample; VAL, DPSR and last only when the
+# window finishes.  Writing N (or FLSH) finishes the window immediately.
 
 # A ramp to feed the aggregate record with something that changes.
 record(calc, "$(P=TST:)SRC") {
@@ -15,19 +18,23 @@ record(calc, "$(P=TST:)SRC") {
     field(EGU,  "counts")
 }
 
-# Processed by the CP link whenever TST:SRC changes.
+# Processed by the CP link on every ramp tick; a window is 5 samples.
 record(aggregate, "$(P=TST:)AGG1") {
-    field(DESC, "Aggregate fed by a DB link")
+    field(DESC, "Aggregate of 5 ramp samples")
     field(DTYP, "Soft Channel")
     field(INP,  "$(P=TST:)SRC CP MS")
     field(SCAN, "Passive")
+    field(MAXN, "100")
+    field(N,    "5")
 }
 
-# CONSTANT INP: device support loads VAL once at init, so this record just
-# republishes the same value whenever it is processed (e.g. dbpf AGG2.PROC 1).
+# CONSTANT INP: every process() (e.g. dbpf AGG2.PROC 1) adds one 42.5 sample;
+# the third finishes the window with dispersion 0.
 record(aggregate, "$(P=TST:)AGG2") {
     field(DESC, "Aggregate with a constant input")
     field(DTYP, "Soft Channel")
     field(INP,  "42.5")
     field(SCAN, "Passive")
+    field(MAXN, "10")
+    field(N,    "3")
 }
