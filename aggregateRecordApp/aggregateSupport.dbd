@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# See file: COPYRIGHT
+# Author: Bruno Martins
+
+include "pvxsIoc.dbd"
+include "aggregateRecord.dbd"
+device(aggregate, CONSTANT, devAggregateSoft, "Soft Channel")
+
+registrar(registerAggregateSourceCmds)

@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# See file: COPYRIGHT
+# Author: Bruno Martins
+#
+# Example aggregate records.  Each uses the default "Soft Channel" device
+# support, which copies INP into VAL; record support then publishes VAL as the
+# "value" field of an epics:nt/NTAggregate:1.0 PV of the same name.
+
+# A ramp to feed the aggregate record with something that changes.
+record(calc, "$(P=TST:)SRC") {
+    field(DESC, "Ramp feeding the aggregate record")
+    field(SCAN, "1 second")
+    field(INPA, "$(P=TST:)SRC.VAL  NPP NMS")
+    field(CALC, "A<100?A+1:0")
+    field(EGU,  "counts")
+}
+
+# Processed by the CP link whenever TST:SRC changes.
+record(aggregate, "$(P=TST:)AGG1") {
+    field(DESC, "Aggregate fed by a DB link")
+    field(DTYP, "Soft Channel")
+    field(INP,  "$(P=TST:)SRC CP MS")
+    field(SCAN, "Passive")
+}
+
+# CONSTANT INP: device support loads VAL once at init, so this record just
+# republishes the same value whenever it is processed (e.g. dbpf AGG2.PROC 1).
+record(aggregate, "$(P=TST:)AGG2") {
+    field(DESC, "Aggregate with a constant input")
+    field(DTYP, "Soft Channel")
+    field(INP,  "42.5")
+    field(SCAN, "Passive")
+}

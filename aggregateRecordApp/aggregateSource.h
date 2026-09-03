@@ -38,7 +38,10 @@ struct SubCtx {
 struct AggregateRecCtx {
     aggregateRecordPvt                 hdr;    /* offset 0: notify() */
     dbCommon                           *prec;
-    pvxs::Value                        proto;  /* built once, cloned per update */
+    pvxs::Value                        proto;  /* type prototype, built once */
+    pvxs::Value                        current;/* latest snapshot; guarded by the
+                                                  record lock, served to GET and
+                                                  posted to subscribers */
     std::mutex                         mu;     /* guards subs */
     std::set<std::shared_ptr<SubCtx>>  subs;
     class AggregateSource              *src;
@@ -74,7 +77,7 @@ private:
     std::map<std::string, AggregateRecCtx*>          records_;
     std::shared_ptr<const std::set<std::string>> names_;
 
-    pvxs::Value makeProto() const;
+    //pvxs::Value makeProto() const;
 };
 
 } /* namespace table */

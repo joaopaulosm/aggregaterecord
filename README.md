@@ -22,16 +22,4 @@ structure
     time_t     timeStamp       :opt
 ```
 
-## Proposal
-
-Relevant fields that would be part of this new record type:
-
-- VAL : The center point of the observation - default is the mean, but changeble by setting field XXX
-- DEV : The dispersion of the observations - default is standard deviation
-- N : number of observations/acquisitions 
-- INP: input link to fetch data
-- XXX : define which measure of central tendency: mean, median or mode (?)
-- YYY: define which measure of dispersion: standard dev, IQR, range, ...
-
-### Fields that can be written
 

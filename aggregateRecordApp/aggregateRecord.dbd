@@ -1,0 +1,111 @@
+recordtype(aggregate) {
+
+# NTAggregate :=
+# 
+# structure
+#     double     value                 // The center point of the observations,
+#                                      // nominally the mean.
+#     long       N                     // Number of observations
+#     double     dispersion      :opt  // Dispersion of observations;
+#                                       // nominally the Standard Deviation or RMS
+#     double     first           :opt  // Initial observation value
+#     time_t     firstTimeStamp  :opt  // Time of initial observation
+#     double     last            :opt  // Final observation value
+#     time_t     lastTimeStamp   :opt  // Time of final observation
+#     double     max             :opt  // Highest value in the N observations
+#     double     min             :opt  // Lowest value in the N observations
+#     string     descriptor      :opt
+#     alarm_t    alarm           :opt
+#     time_t     timeStamp       :opt
+
+
+    include "dbCommon.dbd"
+
+    %
+    %/* Device Support Entry Table */
+    %struct aggregateRecord;
+    %typedef struct {
+    %    dset   common;
+    %    long (*read_newvalue)(struct aggregateRecord *prec);
+    %} aggregatedset;
+    %#define HAS_aggregatedset
+	%#define AGGREGATEREC_DEVINIT_PASS1 2
+    %
+    field(RPVT, DBF_NOACCESS) {
+        prompt("Record Private")
+        special(SPC_NOMOD)
+        extra("void *rpvt")
+        interest(4)
+    }
+    field(INP,DBF_INLINK) {
+        prompt("Input Specification")
+        promptgroup("40 - Input")
+        interest(1)
+    }
+    field(VAL,DBF_DOUBLE) {
+        prompt("Statistical Result Value")
+        promptgroup("40 - Input")
+        # pp(TRUE)
+        special(SPC_NOMOD)
+    }
+    field(N,DBF_ULONG) {
+        prompt("NUM OBS")
+        promptgroup("40 - Input")
+        pp(TRUE)
+		initial("1")
+    }
+	field(IDXN,DBF_ULONG) {
+		prompt("Obs index")
+		special(SPC_NOMOD)
+	}
+	field(MAXN,DBF_ULONG) {
+		prompt("Number of Elements")
+		promptgroup("30 - Action")
+		special(SPC_NOMOD)
+		interest(1)
+		initial("1")
+		prop(YES)		# get_graphic_double, get_control_double
+	}
+    field(DPSR,DBF_DOUBLE) {
+        prompt("Dispersion")
+        promptgroup("40 - Input")
+        # pp(TRUE)
+        special(SPC_NOMOD)
+    }
+    field(FVAL,DBF_DOUBLE) {
+        prompt("First Meas Value")
+        promptgroup("40 - Input")
+        # pp(TRUE)
+        special(SPC_NOMOD)
+    }
+    field(LVAL,DBF_DOUBLE) {
+        prompt("Last Meas Value")
+        promptgroup("40 - Input")
+        # pp(TRUE)
+        special(SPC_NOMOD)
+    }
+    field(MAXV,DBF_DOUBLE) {
+        prompt("Max Value")
+        promptgroup("40 - Input")
+        # pp(TRUE)
+        special(SPC_NOMOD)
+    }
+    field(MINV,DBF_DOUBLE) {
+        prompt("Min Value")
+        promptgroup("40 - Input")
+        # pp(TRUE)
+        special(SPC_NOMOD)
+    }
+    field(FTIME,DBF_NOACCESS) {
+		prompt("Time")
+		special(SPC_NOMOD)
+		interest(2)
+		extra("epicsTimeStamp      ftime")
+	}
+    field(LTIME,DBF_NOACCESS) {
+		prompt("Time")
+		special(SPC_NOMOD)
+		interest(2)
+		extra("epicsTimeStamp      ltime")
+	}
+}

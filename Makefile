@@ -32,4 +32,7 @@ iocBoot_DEPEND_DIRS += $(filter %App,$(DIRS))
 
 # Add any additional dependency rules here:
 
+# exampleApp links libaggregateRecord, so it must be built after aggregateRecordApp
+exampleApp_DEPEND_DIRS += aggregateRecordApp
+
 include $(TOP)/configure/RULES_TOP

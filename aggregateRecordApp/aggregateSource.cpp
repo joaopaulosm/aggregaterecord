@@ -23,6 +23,8 @@
 #include <aggregate/ntaggregate.h>
 
 #include "aggregateSource.h"
+#include "aggregateRecord.h"
+
 
 DEFINE_LOGGER(aglog, "pvxs.aggregate.source");
 
@@ -54,10 +56,32 @@ static pvxs::TypeCode ftype_to_typecode(epicsEnum16 type)
     }
 }
 
-/* Build NTTable prototype from record metadata (must be called under lock) */
-pvxs::Value AggregateSource::makeProto() const
+// pvxs::Value AggregateSource::makeProto() const
+// {
+//     return NTAggregate().build().create();
+// }
+
+/* Rebuild ctx.current from the record's current field values.  Assigning a
+   field also marks it, so the posted delta carries exactly what we set here.
+   Caller must hold the record lock. */
+static void updateSnapshot(AggregateRecCtx &ctx, const aggregateRecord *prec)
 {
-    return NTAggregate().build().create();
+    pvxs::Value v = ctx.proto.cloneEmpty();
+
+    v["value"] = prec->val;
+    /* Only a single observation is synthesised per process() for now. */
+    v["N"]     = int64_t(1);
+
+    v["alarm.severity"] = int32_t(prec->sevr);
+    v["alarm.status"]   = int32_t(prec->stat);
+    v["alarm.message"]  = prec->amsg;
+
+    v["timeStamp.secondsPastEpoch"] =
+        int64_t(prec->time.secPastEpoch) + POSIX_TIME_AT_EPICS_EPOCH;
+    v["timeStamp.nanoseconds"] = int32_t(prec->time.nsec);
+    v["timeStamp.userTag"]     = int32_t(prec->utag);
+
+    ctx.current = std::move(v);
 }
 
 /* ------------------------------------------------------------------ */
@@ -68,7 +92,7 @@ AggregateSource::AggregateSource()
     DBENTRY dbe;
     dbInitEntry(pdbbase, &dbe);
 
-    if (dbFindRecordType(&dbe, "table") == 0) {
+    if (dbFindRecordType(&dbe, "aggregate") == 0) {
         for (long s = dbFirstRecord(&dbe); !s; s = dbNextRecord(&dbe)) {
             const char *rname = dbGetRecordName(&dbe);
             dbCommon *prec = (dbCommon *)dbe.precnode->precord;
@@ -79,16 +103,16 @@ AggregateSource::AggregateSource()
             ctx->hdr.notify = &AggregateSource::onProcess;
             ctx->hdr.self   = ctx.get();
 
-            /* Build the NTTable prototype once — column metadata is fixed after
-               device-support init, which has already run by the time
-               addAggregateSource() constructs us. Publishing rpvt under the record
-               lock makes it safe against a concurrent process(). */
             try {
                 RecLock lk(prec);
-                ctx->proto = makeProto();
+                ctx->proto = NTAggregate().build().create();
+                /* Seed current from the record's initial field values, so a GET
+                   on a record that has not processed yet still returns a marked
+                   (non-empty) structure. */
+                updateSnapshot(*ctx, (aggregateRecord *)prec);
                 ((aggregateRecord *)prec)->rpvt = &ctx->hdr;
             } catch (std::exception &e) {
-                log_err_printf(aglog, "makeProto failed for '%s': %s\n",
+                log_err_printf(aglog, "NTAggregate().build().create() failed for '%s': %s\n",
                                rname, e.what());
                 continue;
             }
@@ -125,7 +149,7 @@ void AggregateSource::onCreate(std::unique_ptr<pvxs::server::ChannelControl> &&c
     if (it == records_.end())
         return;
 
-    TableRecCtx *ctx = it->second;
+    AggregateRecCtx *ctx = it->second;
 
     /* GET / PUT */
     chan->onOp([ctx](std::unique_ptr<pvxs::server::ConnectOp> &&op) {
@@ -136,7 +160,7 @@ void AggregateSource::onCreate(std::unique_ptr<pvxs::server::ChannelControl> &&c
                 pvxs::Value v;
                 {
                     RecLock lk(ctx->prec);
-                    v = snapshot(*ctx, true);
+                    v = ctx->current.clone();
                 }
                 get->reply(v);
             } catch (std::exception &e) {
@@ -147,11 +171,11 @@ void AggregateSource::onCreate(std::unique_ptr<pvxs::server::ChannelControl> &&c
         op->onPut([ctx](std::unique_ptr<pvxs::server::ExecOp> &&put,
                        pvxs::Value &&val) {
             try {
-                {
-                    RecLock lk(ctx->prec);
-                    putValueTable(*ctx, val);
-                    dbProcess(ctx->prec);   /* process() drives the update via rpvt */
-                }
+                // {
+                //     RecLock lk(ctx->prec);
+                //     putValueTable(*ctx, val);
+                //     dbProcess(ctx->prec);   /* process() drives the update via rpvt */
+                // }
                 put->reply();
             } catch (std::exception &e) {
                 put->error(e.what());
@@ -179,9 +203,9 @@ void AggregateSource::onCreate(std::unique_ptr<pvxs::server::ChannelControl> &&c
                         RecLock lk(ctx->prec);
                         std::lock_guard<std::mutex> g(ctx->mu);
                         ctx->subs.insert(sc);
-                        sc->ctrl->post(snapshot(*ctx, true));
+                        sc->ctrl->post(ctx->current.clone());
                     } catch (std::exception &e) {
-                        log_exc_printf(tlog, "initial snapshot: %s\n", e.what());
+                        log_exc_printf(aglog, "initial snapshot: %s\n", e.what());
                     }
                 } else {
                     std::lock_guard<std::mutex> g(ctx->mu);
@@ -212,8 +236,21 @@ void AggregateSource::onProcess(struct aggregateRecord *prect)
     if (!ctx)
         return;
 
-    std::lock_guard<std::mutex> g(ctx->mu);
-    log_info_printf(aglog, "onProcess: %s\n", prect->name);
+    log_debug_printf(aglog, "onProcess: %s\n", prect->name);
+
+    try {
+        /* The record lock is held by process(), so ctx->current is ours to
+           rewrite; ctx->mu only guards the subscriber set. */
+        updateSnapshot(*ctx, prect);
+
+        std::lock_guard<std::mutex> g(ctx->mu);
+        for (auto &sub : ctx->subs) {
+            if (sub->ctrl)
+                sub->ctrl->post(ctx->current.clone());
+        }
+    } catch (std::exception &e) {
+        log_exc_printf(aglog, "onProcess '%s': %s\n", prect->name, e.what());
+    }
 }
 
 AggregateSource::List AggregateSource::onList()

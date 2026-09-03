@@ -2,9 +2,10 @@
 #define NT_AGGREGATE_H
 
 #include <pvxs/nt.h>
+#include "aggregateRecordAPI.h"
 
 struct NTAggregate {
-    PVXS_API pvxs::TypeDef build() const;
+    AGGREGATERECORD_API pvxs::TypeDef build() const;
     inline pvxs::Value create() const {
         return build().create();
     }

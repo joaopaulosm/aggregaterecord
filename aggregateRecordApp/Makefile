@@ -1,18 +1,31 @@
-# SPDX-FileCopyrightText: 1997 Argonne National Laboratory
-#
-# SPDX-License-Identifier: EPICS
-
-# Makefile at top of application tree
-TOP = ..
+TOP=..
 include $(TOP)/configure/CONFIG
 
-# Directories to be built, in any order.
-# You can replace these wildcards with an explicit list
-DIRS += $(wildcard src* *Src*)
-DIRS += $(wildcard db* *Db*)
+USR_CPPFLAGS += -DUSE_TYPED_RSET -DUSE_TYPED_DSET -DDUSE_TYPED_DRVET
+USR_CXXFLAGS += -std=c++11
 
-# If the build order matters, add dependency rules like this,
-# which specifies that xxxSrc must be built after src:
-#xxxSrc_DEPEND_DIRS += src
+DBDINC += aggregateRecord
+DBD += aggregateSupport.dbd
 
-include $(TOP)/configure/RULES_DIRS
+LIBRARY_IOC += aggregateRecord
+
+aggregateRecord_SRCS += aggregateRecord.cpp
+aggregateRecord_SRCS += devAggregateSoft.cpp
+aggregateRecord_SRCS += ntaggregate.cpp
+
+aggregateRecord_SRCS += aggregateSource.cpp
+aggregateRecord_SRCS += aggregateSourceRegistrar.cpp
+
+aggregateRecord_LIBS += pvxsIoc pvxs $(EPICS_BASE_IOC_LIBS)
+
+USR_CPPFLAGS += -DBUILDING_aggregateRecord_API
+API_HEADER = aggregateRecordAPI.h
+INC += aggregate/ntaggregate.h
+
+include $(TOP)/configure/RULES
+
+ifdef T_A
+ifeq (,$(INSTALL_API_HEADERS))
+$(error Requires epics-base >= 7.0.4)
+endif
+endif
