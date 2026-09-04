@@ -81,7 +81,7 @@ static void checkAlarms(aggregateRecord *prec)
         recGblSetSevr(prec, UDF_ALARM, prec->udfs);
 }
 
-static void monitor(aggregateRecord *prec)
+static void monitor(aggregateRecord *prec, long updateVal)
 {
     unsigned short monitor_mask = recGblResetAlarms(prec);
 
@@ -89,13 +89,15 @@ static void monitor(aggregateRecord *prec)
        track per-field changes.  FTIME/LTIME are DBF_NOACCESS: nothing can
        subscribe to them, so they are not posted. */
     monitor_mask |= DBE_VALUE | DBE_LOG;
-    db_post_events(prec, &prec->val,  monitor_mask);
     db_post_events(prec, &prec->dpsr, monitor_mask);
     db_post_events(prec, &prec->idxn, monitor_mask);
     db_post_events(prec, &prec->fval, monitor_mask);
     db_post_events(prec, &prec->lval, monitor_mask);
     db_post_events(prec, &prec->maxv, monitor_mask);
     db_post_events(prec, &prec->minv, monitor_mask);
+
+    if (updateVal)
+        db_post_events(prec, &prec->val,  monitor_mask);
 }
 
 /* Hand the record to whoever installed itself in RPVT (AggregateSource).  Called
@@ -173,6 +175,7 @@ static long process(struct dbCommon *pcommon)
     aggregatedset   *pdset = (aggregatedset *)prec->dset;
     unsigned char   pact = prec->pact;
     long            status = 0;
+    long            updateType = 0;
 
     if (pdset == NULL || pdset->read_newvalue == NULL) {
         prec->pact = TRUE;
@@ -182,9 +185,13 @@ static long process(struct dbCommon *pcommon)
 
     /* pact must not be set until after calling device support, so async device
        support can claim the record by setting it itself. */
-    status = pdset->read_newvalue(prec);
+    updateType = pdset->read_newvalue(prec);
     if (!pact && prec->pact)
         return 0;
+
+    /* TODO: refactor the error handling */
+    if ((updateType != 0) && (updateType != 2))
+        status = updateType;
 
     prec->pact = TRUE;
 
@@ -193,8 +200,11 @@ static long process(struct dbCommon *pcommon)
     /* udf is cleared by device support when it finishes a window, not here:
        a partial sample does not make VAL defined. */
     checkAlarms(prec);
-    monitor(prec);
-    notifyPublisher(prec);
+
+    /* post updates to VAL only when measurement is finished */
+    monitor(prec, updateType);
+    if (updateType)
+        notifyPublisher(prec);
 
     recGblFwdLink(prec);
     prec->pact = FALSE;

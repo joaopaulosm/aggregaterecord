@@ -30,6 +30,8 @@ recordtype(aggregate) {
     %} aggregatedset;
     %#define HAS_aggregatedset
 	%#define AGGREGATEREC_DEVINIT_PASS1 2
+    %#define AGGREGATEREC_PARTIAL_UPDATE 0
+    %#define AGGREGATEREC_VALUE_UPDATE 1
     %
     field(RPVT, DBF_NOACCESS) {
         prompt("Record Private")

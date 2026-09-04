@@ -53,8 +53,6 @@ aggregatedset devAggregateSoft = {
 };
 epicsExportAddress(dset, devAggregateSoft);
 
-/* dpvt is allocated lazily rather than only in init_record because a runtime
-   put to INP or DTYP resets it to NULL (dbAccess.c, dbPutFieldLink). */
 static SoftPvt *ensurePvt(aggregateRecord *prec)
 {
     AggregateRecordWrapper rec(*prec);
@@ -101,32 +99,36 @@ static long readLocked(struct link *pinp, void *priv)
 
 /* *have is false when the link is a CONSTANT that holds nothing (INP unset):
    not an error, just no observation. */
-static long fetchSample(aggregateRecord *prec, Sample *s, bool *have)
+static long fetchSample(aggregateRecord *prec, Sample *s, bool *valid)
 {
     long status;
 
-    *have = false;
+    *valid = false;
 
     if (dbLinkIsConstant(&prec->inp)) {
+        // indicate that no value was fetched
         if (dbLoadLink(&prec->inp, DBF_DOUBLE, &s->x))
             return 0;
+        // if it is a constant, consider it valid and use current TS
         epicsTimeGetCurrent(&s->ts);
-        *have = true;
+        *valid = true;
         return 0;
     }
 
+    // get the value from the input link
     status = dbLinkDoLocked(&prec->inp, readLocked, s);
     if (status == S_db_noLSET)
         status = readLocked(&prec->inp, s);
 
-    *have = (status == 0);
+    *valid = (status == 0);
     return status;
 }
 
-static void finishWindow(aggregateRecord *prec, SoftPvt *pvt)
+static long finishWindow(aggregateRecord *prec, SoftPvt *pvt)
 {
     epicsUInt32 n = prec->idxn;
 
+    // validate the number of observations
     if (n > pvt->cap)
         n = pvt->cap;
 
@@ -134,15 +136,18 @@ static void finishWindow(aggregateRecord *prec, SoftPvt *pvt)
         double sum = 0.0, m2 = 0.0, mean;
         epicsUInt32 i;
 
+        // calculate mean
         for (i = 0; i < n; i++)
             sum += pvt->buf[i];
         mean = sum / n;
 
+        // calculate std dev
         for (i = 0; i < n; i++) {
             double d = pvt->buf[i] - mean;
             m2 += d * d;
         }
 
+        // populate the main records
         prec->val   = mean;
         prec->dpsr  = sqrt(m2 / n);
         prec->lval  = pvt->buf[n - 1];
@@ -151,25 +156,30 @@ static void finishWindow(aggregateRecord *prec, SoftPvt *pvt)
     }
 
     pvt->done = true;
+    return 2;
 }
 
-static void accumulate(aggregateRecord *prec, SoftPvt *pvt, const Sample *s)
+static long accumulate(aggregateRecord *prec, SoftPvt *pvt, const Sample *s)
 {
     epicsUInt32 target = prec->n;
 
+    // validate the number of observations
     if (target < 1)
         target = 1;
     if (target > pvt->cap)
         target = pvt->cap;
 
+    // 
     if (pvt->done || prec->idxn >= target) {
         prec->idxn = 0;
         pvt->done  = false;
     }
 
+    // copy data and timestamp to the buffer
     pvt->buf[prec->idxn++] = s->x;
     pvt->lastTs = s->ts;
 
+    // if first sample, reset statistics
     if (prec->idxn == 1) {
         prec->fval  = s->x;
         prec->minv  = s->x;
@@ -188,8 +198,11 @@ static void accumulate(aggregateRecord *prec, SoftPvt *pvt, const Sample *s)
         prec->tse == epicsTimeEventDeviceTime)
         prec->time = s->ts;
 
+    // if observations are complete, perform the calculations
     if (prec->idxn >= target)
-        finishWindow(prec, pvt);
+        return finishWindow(prec, pvt);
+
+    return 0;
 }
 
 static long init_record(dbCommon *pcommon)
@@ -208,7 +221,7 @@ static long read_newvalue(aggregateRecord *prec)
 {
     SoftPvt *pvt = ensurePvt(prec);
     Sample   s;
-    bool     have;
+    bool     valid;
     long     status;
 
     if (!pvt) {
@@ -220,16 +233,15 @@ static long read_newvalue(aggregateRecord *prec)
        sample.  The next sample opens a new window. */
     if (prec->flsh) {
         prec->flsh = 0;
-        finishWindow(prec, pvt);
-        return 0;
+        return finishWindow(prec, pvt);
     }
 
-    status = fetchSample(prec, &s, &have);
+    status = fetchSample(prec, &s, &valid);
     if (status)
         return status;
 
-    if (have)
-        accumulate(prec, pvt, &s);
+    if (valid)
+        return accumulate(prec, pvt, &s);
 
     return 0;
 }

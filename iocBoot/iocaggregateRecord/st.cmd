@@ -6,6 +6,9 @@
 
 < envPaths
 
+epicsEnvSet(EPICS_CA_ADDR_LIST,  "idmz-ro-epics-gw-tn.esss.lu.se localhost")
+epicsEnvSet(EPICS_PVA_ADDR_LIST, "idmz-ro-epics-gw-tn.esss.lu.se localhost")
+
 cd "${TOP}"
 
 ## Register all support components

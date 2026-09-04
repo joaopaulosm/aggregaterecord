@@ -38,3 +38,12 @@ record(aggregate, "$(P=TST:)AGG2") {
     field(MAXN, "10")
     field(N,    "3")
 }
+
+record(aggregate, "$(P=TST:)AGGRF") {
+    field(DESC, "Aggregate of 5 ramp samples")
+    field(DTYP, "Soft Channel")
+    field(INP,  "Spk-100RFC:RFS-DIG-101:AI3-SMonAvg-Mag CPP")
+    field(SCAN, "Passive")
+    field(MAXN, "100")
+    field(N,    "14")
+}
